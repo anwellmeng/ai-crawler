@@ -41,7 +41,7 @@ for file in Path("to_analyze").glob("*.md"):
   with file.open(encoding="utf-8") as f:
     md = f.read()
 
-  LIMIT = 159_000
+  LIMIT = 122_000
   tok = count_tokens(md)
   if tok > LIMIT:
       # Create the skipped_sites directory if it doesn't exist
@@ -63,7 +63,7 @@ for file in Path("to_analyze").glob("*.md"):
       continue
   
   completion = client.chat.completions.create(
-    model="deepseek/deepseek-chat-v3.1:free",
+    model="meituan/longcat-flash-chat:free",
     messages=[
       {
         "role": "system",
@@ -83,6 +83,7 @@ RULES
 - Do not guess or invent data.
 - Deduplicate. Priority order: author > agent/publicist > publisher/booking.
 - Exclude: newsletter signups, press kits, social DMs, RSS, generic support portals.
+- No extra prose in your response.
 
 EMAILS
 - Accept from visible text and mailto:.
@@ -103,15 +104,28 @@ END: Output exactly the JSON object per schema above.
       {"role": "user", "content": md}
     ]
   )
+
+  # Validate JSON format
+  import json
+  result = completion.choices[0].message.content
+  try:
+      json.loads(result)
+  except json.JSONDecodeError as e:
+      print(f"Invalid JSON for {file.name}: {e}")
+      # Move the .md file to failed_jsons/ directory
+      failed_dir = Path("failed_jsons")
+      failed_dir.mkdir(exist_ok=True)
+      file.rename(failed_dir / file.name)
+      continue
+
   # Save to .json
   output_dir = Path("jsons")
   output_dir.mkdir(exist_ok=True)
   json_name = os.path.splitext(file.name)[0] + ".json"
   output_path = output_dir / json_name
 
-  result = completion.choices[0].message.content
-with open(output_path, "w", encoding="utf-8") as out_file:
-    out_file.write(result)
+  with open(output_path, "w", encoding="utf-8") as out_file:
+      out_file.write(result)
 
 # Create the finished_sites directory if it doesn't exist
 finished_dir = Path("finished_sites")
