@@ -3,13 +3,16 @@ from crawl4ai import AsyncWebCrawler, DefaultMarkdownGenerator
 from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
 from crawl4ai.deep_crawling import BestFirstCrawlingStrategy
 from crawl4ai.deep_crawling.scorers import KeywordRelevanceScorer
-
+from config import(
+    AUTHORS_CSV,
+    SCRAPED_SITES_DIR
+)
 
 
 async def main():
     urls = []
     try:
-        with open('authors.csv', 'r') as csvfile:
+        with open(AUTHORS_CSV, 'r') as csvfile:
             reader = csv.reader(csvfile)
             for row in reader:
                 if row and row[0].strip():
@@ -48,7 +51,7 @@ async def main():
                         print("Error:", result.error_message)
                         continue
                 try:
-                    with open(output_file, "w", encoding="utf-8") as f:
+                    with open(SCRAPED_SITES_DIR / output_file, "w", encoding="utf-8") as f:
                         f.write(combined_md)
                         print(f"Successfully saved {link} to {output_file}")
                         n=n+1
