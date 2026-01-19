@@ -61,6 +61,7 @@ async def crawl_authors():
             except Exception as e:
                 print("Error during crawler.arun", repr(e))
 
+    
                 
 async def main():
     crawl_authors()

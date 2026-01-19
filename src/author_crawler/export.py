@@ -42,11 +42,11 @@ def process_jsons_to_csv() -> int:
     print(f"Found {len(json_files)} JSON files to process")
 
     # Open CSV file for writing
-    with AUTHORS_CONTACTS_CSV.open("w", newline="", encoding="utf-8") as csvfile:
+    with AUTHORS_CONTACTS_CSV.open("a", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
 
-        # Write header
-        writer.writerow(['source', 'emails', 'contact_links'])
+        if csvfile.tell() == 0:
+            writer.writerow(['emails', 'contact_links'])
 
         processed_count = 0
 
@@ -62,19 +62,11 @@ def process_jsons_to_csv() -> int:
                 emails = data.get('emails', [])
                 contact_links = data.get('contact_links', [])
 
-                # Determine source column
-                source = ''
-                if is_url_like_filename(json_file.name):
-                    source = json_file.stem
-
+                # Combines multiples as plain strings
+                emails_str = "; ".join(emails)
+                contact_links_str = "; ".join(contact_links)
                 # Write row to CSV
-                writer.writerow(
-                    [
-                        source,
-                        json.dumps(emails),
-                        json.dumps(contact_links),
-                    ]
-                )
+                writer.writerow([emails_str, contact_links_str])
 
                 # Move processed file to processed_jsons directory
                 processed_path = PROCESSED_JSONS_DIR / json_file.name
