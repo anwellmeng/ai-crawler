@@ -11,7 +11,7 @@ OUTPUTS_DIR = DATA_DIR / "outputs"
 LOGS_DIR = PROJECT_ROOT / "logs"
 
 AUTHORS_CSV = INPUTS_DIR / "authors.csv"
-AUTHORS_CONTACTS_CSV = OUTPUTS_DIR / "authors_contacts.csv"
+AUTHORS_CONTACTS_CSV = OUTPUTS_DIR / "export.csv"
 
 JSONS_DIR = OUTPUTS_DIR / "jsons"
 PROCESSED_JSONS_DIR = OUTPUTS_DIR / "processed_jsons"

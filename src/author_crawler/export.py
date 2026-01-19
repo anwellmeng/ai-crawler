@@ -6,7 +6,11 @@ import re
 import shutil
 from pathlib import Path
 
-from .config import AUTHORS_CONTACTS_CSV, JSONS_DIR, PROCESSED_JSONS_DIR
+from config import(
+    PROCESSED_JSONS_DIR,
+    JSONS_DIR,
+    AUTHORS_CONTACTS_CSV,
+)
 
 def is_url_like_filename(filename: str) -> bool:
     """Check if filename looks like a URL (contains http and ends with domain-like pattern)"""
