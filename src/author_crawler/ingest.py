@@ -9,12 +9,27 @@ rows are left untouched so their crawl/analyze progress is preserved.
 from __future__ import annotations
 
 import csv
+import itertools
 import logging
+import sys
+from urllib.parse import urlparse
 
 from config import AUTHORS_CSV
 from db import get_conn, init_db
 
 logger = logging.getLogger(__name__)
+
+
+def _looks_like_header(value: str) -> bool:
+    normalized = value.strip().lower()
+    if not normalized:
+        return False
+
+    if normalized in {"url", "author_url", "author website", "author_website"}:
+        return True
+
+    parsed = urlparse(value.strip())
+    return not (parsed.scheme and parsed.netloc)
 
 
 def ingest() -> int:
@@ -30,8 +45,11 @@ def ingest() -> int:
 
     with AUTHORS_CSV.open(newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
-        next(reader, None) # skip header
+        first_row = next(reader, None)
         with get_conn() as conn:
+            if first_row and first_row[0].strip() and not _looks_like_header(first_row[0]):
+                reader = itertools.chain([first_row], reader)
+
             for row in reader:
                 if not row or not row[0].strip():
                     continue
@@ -52,3 +70,7 @@ def ingest() -> int:
     logger.info("Ingest complete: %d new, %d already present", inserted, skipped)
     print(f"Ingested {inserted} new author(s). ({skipped} already in database.)")
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(ingest())
