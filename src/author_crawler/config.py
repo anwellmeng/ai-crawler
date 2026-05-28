@@ -12,7 +12,7 @@ LOGS_DIR = PROJECT_ROOT / "logs"
 
 AUTHORS_CSV = INPUTS_DIR / "authors.csv"
 AUTHORS_CONTACTS_CSV = OUTPUTS_DIR / "export.csv"
-DB_PATH = DATA_DIR
+DB_PATH = DATA_DIR / "pipeline.db"
 # -------
 # Crawl Settings
 CRAWL_CONCURRENCY = 20
@@ -25,4 +25,4 @@ CRAWL_KEYWORD_WEIGHT = 0.7
 LLM_MODEL       = "openai/gpt-oss-20b:free"
 LLM_MAX_TOKENS  = 1_000
 LLM_CONCURRENCY = 10       # simultaneous API calls
-LLM_TOKEN_LIMIT = 122_000  # files larger than this are skipped
+LLM_TOKEN_LIMIT = 122_000  # markdown truncated to this before sending
