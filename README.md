@@ -1,101 +1,185 @@
 # AI Crawler
 
-The **AI Crawler** is a small Python utility that scrapes unique author websites, extracts contact information, and compiles the results into a CSV file. It is designed to help writers, publishers, and researchers gather email addresses and contact form links from a list of author URLs—even when each site is structured differently.
+A four-stage Python pipeline that takes a CSV of website URLs, deep-crawls each site, uses an LLM to extract contact information, and outputs a single CSV of emails and contact form links.
 
-## Stack
-**Programming Language:** Python 3.11+
+All pipeline state is stored in a local SQLite database (`data/pipeline.db`), so runs are resumable — if the process is interrupted, re-running picks up exactly where it left off without re-crawling or re-analyzing completed rows.
 
-**Libraries:**
-* openai – Python API client library (used with OpenRouter via a custom base URL, or with OpenAI directly).
-* crawl4ai – asynchronous web crawler that fetches pages and generates Markdown.
-* tiktoken – token counter for limiting API usage.
-* csv, json, re, shutil, pathlib – standard library modules.
-
-**External Services / APIs:**
-
-* **OpenRouter (default)** – model API provider used for LLM-based extraction of emails and contact links.
-* **OpenAI (optional)** – can be used instead by configuring the client to point to OpenAI’s endpoint and using an OpenAI API key.
-
-## Project Structure
-```
-README.md              # Project overview and usage
-requirements.txt       # Python dependencies
-author_crawler/          # Core library
-    __init__.py
-    analyze.py            # Uses an LLM to parse scraped Markdown and convert to JSON
-    crawl.py              # Crawls websites and saves Markdown
-    export.py             # Converts JSON results to a CSV
-    config.py             # Shared paths and constants
-scripts/
-    crawl.py              # TO BE UPDATED
-    analyze.py            # TO BE UPDATED
-    export_csv.py         # TO BE UPDATED
-data/
-    inputs/
-        authors.csv       # CSV of URLs
-    outputs/
-        jsons/            # Raw JSON from LLM
-        processed_jsons/  # Moved after export
-        export.csv        # Final CSV
-        skipped_sites/    # Moved if markdown file is too large
-        failed_jsons/     # Any sites that couldn't be scanned
-```
+---
 
 ## Prerequisites
-* **Python 3.11+** 
-* **API key**
-  * Default: set the environment variable `OPENROUTER_API_KEY` (OpenRouter).
-* **Python packages** – Install the dependencies:
+
+- Python 3.11+
+- An [OpenRouter](https://openrouter.ai) API key (free tier works)
+
+---
+
+## Setup
+
+**1. Clone the repository and install dependencies:**
 
 ```bash
 pip install -r requirements.txt
 ```
 
-If a `requirements.txt` is not present, install the following packages manually:
+**2. Create a `.env` file in the project root with your API key:**
 
-```bash
-pip install openai crawl4ai tiktoken
+```
+OPENROUTER_API_KEY=your_key_here
 ```
 
-## Usage
+**3. Prepare your input CSV:**
 
-1. **Prepare the input** – Place a CSV file named `authors.csv` in `data/inputs/`. The CSV should have a header row and a column containing the author website URLs. **The crawler reads URLs from the first column only, so make sure the URLs are in column 1.**
+Create `data/inputs/authors.csv` with one URL per row in the first column. A header row is optional — the pipeline detects and skips it automatically.
 
-2. **Crawl the websites** – Run the crawler script:
-
-```bash
-python scripts/crawl.py
+```
+https://www.authorname.com/
+https://www.anotherauthor.com/
+https://www.writerswebsite.org/
 ```
 
-The crawler will create Markdown files in `data/outputs/scraped_sites/`.
+---
 
-3. **Analyze the scraped content** – Process the Markdown files with OpenAI to extract emails and contact links:
+## Running the Pipeline
 
-```bash
-python scripts/analyze.py
-```
-
-The results are stored as JSON files in `data/outputs/jsons/`.
-
-4. **Export to CSV** – Convert the JSON results into a single CSV file:
+**Run all four stages in sequence:**
 
 ```bash
-python scripts/export_csv.py
+python src/author_crawler/pipeline.py run
 ```
 
-The final CSV `authors_contacts.csv` will be located in `data/outputs/`.
+**Check progress at any time:**
+
+```bash
+python src/author_crawler/pipeline.py status
+```
+
+The output CSV is written to `data/outputs/export.csv` when the pipeline finishes.
+
+---
+
+## Stages
+
+The pipeline has four stages that can also be run individually:
+
+| Command | What it does |
+|---|---|
+| `ingest` | Loads `authors.csv` into the database. Safe to re-run — existing rows are never touched. |
+| `crawl` | Deep-crawls each site and stores the combined page Markdown in the DB. |
+| `analyze` | Sends each site's Markdown to the LLM and extracts emails and contact form links. |
+| `export` | Writes all successfully analyzed rows to `data/outputs/export.csv`. |
+
+```bash
+python src/author_crawler/pipeline.py ingest
+python src/author_crawler/pipeline.py crawl
+python src/author_crawler/pipeline.py analyze
+python src/author_crawler/pipeline.py export
+```
+
+---
+
+## Output
+
+`data/outputs/export.csv` has three columns:
+
+| Column | Description |
+|---|---|
+| `url` | The original author URL from your input CSV |
+| `emails` | Semicolon-separated email addresses found on the site |
+| `contact_links` | Semicolon-separated URLs of contact form pages |
+
+Example:
+
+```
+url,emails,contact_links
+https://www.authorname.com/,author@example.com,https://www.authorname.com/contact
+https://www.anotherauthor.com/,,https://www.anotherauthor.com/connect
+```
+
+---
+
+## Troubleshooting
+
+**Inspect what the crawler captured for a specific site:**
+
+```bash
+python src/author_crawler/pipeline.py dump-md https://www.authorname.com/
+```
+
+This writes the stored Markdown to `data/outputs/md_dumps/` so you can see exactly what the LLM received.
+
+**Dump all stored Markdown at once:**
+
+```bash
+python src/author_crawler/pipeline.py dump-md
+```
+
+**Re-analyze a failed row** — update its status directly in the database, then re-run analyze:
+
+```bash
+sqlite3 data/pipeline.db \
+  "UPDATE authors SET analyze_status='pending' WHERE url='https://www.authorname.com/'"
+python src/author_crawler/pipeline.py analyze
+```
+
+---
+
+## Configuration
+
+All tunable settings are in `src/author_crawler/config.py`:
+
+```python
+# Crawl settings
+CRAWL_CONCURRENCY = 20      # simultaneous browser sessions
+CRAWL_MAX_DEPTH   = 2       # how many link-hops deep to follow
+CRAWL_MAX_PAGES   = 8       # max pages fetched per site
+
+# LLM settings
+LLM_MODEL         = "openai/gpt-oss-20b:free"   # any OpenRouter model ID
+LLM_CONCURRENCY   = 10      # simultaneous API calls
+LLM_TOKEN_LIMIT   = 122_000 # markdown is truncated to this before sending
+```
+
+To switch LLM models, replace `LLM_MODEL` with any model available on [OpenRouter](https://openrouter.ai/models). Free-tier models may be rate-limited under heavy load — a paid model will be more reliable for large batches.
+
+---
+
+## Project Structure
+
+```
+data/
+    inputs/
+        authors.csv          # Your input URLs (one per row, first column)
+    outputs/
+        export.csv           # Final output
+        md_dumps/            # Markdown debug dumps (generated on demand)
+    pipeline.db              # SQLite database (all pipeline state)
+logs/
+    pipeline.log             # Full run log for debugging
+src/author_crawler/
+    pipeline.py              # CLI entry point
+    ingest.py                # Stage 1: CSV -> DB
+    crawl.py                 # Stage 2: crawl sites, store Markdown
+    analyze.py               # Stage 3: LLM extraction
+    export.py                # Stage 4: DB -> CSV
+    config.py                # Paths and tunable parameters
+    db.py                    # SQLite connection and schema
+    awards_crawl.py          # Standalone NIEA finalist page scraper (separate tool)
+tests/
+    unit/                    # Per-module unit tests
+    integration/             # Full pipeline integration tests
+```
+
+---
 
 ## Notes
 
-* The project relies on the requirements.txt file or the manual install instructions in the README; exact package versions are not pinned.
-* The crawler limits each page to 122 000 tokens to avoid excessive API usage.
-* Files that exceed the token limit are moved to `skipped_sites/`.
-* Failed JSON responses are moved to `failed_jsons/` for debugging.
-* OpenRouter's free models tend to get rate limited when there's high usage. You can switch the model out in crawl.py with any other openrouter model of your liking. The default is **meituan/longcat-flash-chat:free**, a free model on OpenRouter.
-* The project is intended to run locally on a machine with Python 3.11+ and internet access to the target websites and OpenAI API.
+- The pipeline is resumable. If a crawl is interrupted, re-running `crawl` only processes URLs still marked `pending`.
+- Sites that return very little content (bot-blocked, login-walled, blank pages) are marked `skipped` in the analyze stage and are not included in the output.
+- The crawler respects per-domain rate limiting via crawl4ai's internal dispatcher.
+- All logging goes to `logs/pipeline.log`. The terminal only shows progress summaries.
+
+---
 
 ## Disclaimer
-This tool is intended for responsible use. Always respect websites’ terms of service, robots.txt, and applicable data privacy laws when collecting contact information.
 
-## Lessons Learned (so far):
-* I learned that over-planning was slowing me down. Once I started writing code, the project’s direction became clearer with each iteration, helping me focus on progress instead of perfection.
+Use this tool responsibly. Always respect a website's `robots.txt`, terms of service, and applicable data privacy laws when collecting contact information.
