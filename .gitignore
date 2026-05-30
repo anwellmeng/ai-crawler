@@ -24,9 +24,15 @@ logs/
 .DS_Store
 .idea/
 .vscode/
+.rooignore
+
+# Local notes/runtime docs
+Completed-Scrapes.md
 
 # Data inputs/outputs
 authors.csv
 data/inputs/authors.csv
 data/outputs/
-TODO.md
+data/pipeline.db
+data/pipeline.db-shm
+data/pipeline.db-wal
