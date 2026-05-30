@@ -1,95 +1,96 @@
+"""
+Export stage.
+
+Two responsibilities:
+1. export()     — write a fresh CSV of all successfully analyzed authors.
+2. dump_markdown() — write markdown from the DB back to disk for inspection.
+
+The CSV is always written fresh (not appended) so re-running export
+never produces duplicates or stale rows.  The URL column is included
+so every row can be traced back to its source.
+"""
+
 from __future__ import annotations
 
 import csv
-import json
-import re
-import shutil
+import hashlib
+import logging
 from pathlib import Path
+from typing import Optional
 
-from config import(
-    PROCESSED_JSONS_DIR,
-    JSONS_DIR,
-    AUTHORS_CONTACTS_CSV,
-)
+from config import AUTHORS_CONTACTS_CSV, OUTPUTS_DIR
+from db import get_conn
 
-def is_url_like_filename(filename: str) -> bool:
-    """Check if filename looks like a URL (contains http and ends with domain-like pattern)"""
-    # Remove .json extension for checking
-    name_without_ext = filename.replace(".json", "")
+logger = logging.getLogger(__name__)
 
-    # Check if it starts with 'http' and ends with common domain patterns
-    return (
-        name_without_ext.startswith("http")
-        and re.search(r"_(com|org|net|edu|info|biz|co_uk|blogspot_com)$", name_without_ext)
-    )
 
-def process_jsons_to_csv() -> int:
-    """Process all JSON files in jsons/ directory and create a single CSV file"""
+# ── CSV export ────────────────────────────────────────────────────────────────
 
-    if not JSONS_DIR.exists():
-        print(f"Error: {JSONS_DIR} directory not found")
-        return 1
+def export() -> int:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT url, emails, contact_links
+               FROM authors
+               WHERE analyze_status = 'done'"""
+        ).fetchall()
 
-    PROCESSED_JSONS_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Get all JSON files
-    json_files = [f for f in JSONS_DIR.iterdir() if f.suffix == ".json"]
-
-    if not json_files:
-        print("No JSON files found in jsons directory")
+    if not rows:
+        print("No analyzed authors to export.")
         return 0
 
-    print(f"Found {len(json_files)} JSON files to process")
+    AUTHORS_CONTACTS_CSV.parent.mkdir(parents=True, exist_ok=True)
 
-    # Open CSV file for writing
-    with AUTHORS_CONTACTS_CSV.open("a", newline="", encoding="utf-8") as csvfile:
-        writer = csv.writer(csvfile)
+    with AUTHORS_CONTACTS_CSV.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["url", "emails", "contact_links"])
+        for row in rows:
+            writer.writerow([
+                row["url"],
+                row["emails"]        or "",
+                row["contact_links"] or "",
+            ])
 
-        if csvfile.tell() == 0:
-            writer.writerow(['emails', 'contact_links'])
-
-        processed_count = 0
-
-        for json_file in json_files:
-            json_path = JSONS_DIR / json_file.name
-
-            try:
-                # Read JSON file
-                with json_path.open("r", encoding="utf-8") as f:
-                    data = json.load(f)
-
-                # Extract data
-                emails = data.get('emails', [])
-                contact_links = data.get('contact_links', [])
-
-                # Combines multiples as plain strings
-                emails_str = "; ".join(emails)
-                contact_links_str = "; ".join(contact_links)
-                # Write row to CSV
-                writer.writerow([emails_str, contact_links_str])
-
-                # Move processed file to processed_jsons directory
-                processed_path = PROCESSED_JSONS_DIR / json_file.name
-                shutil.move(str(json_path), processed_path)
-
-                processed_count += 1
-                print(f"Processed: {json_file}")
-
-            except json.JSONDecodeError as e:
-                print(f"Error parsing {json_file}: {e}")
-            except Exception as e:
-                print(f"Error processing {json_file}: {e}")
-
-    print(f"\nProcessing complete!")
-    print(f"Successfully processed {processed_count} files")
-    print(f"CSV file created: {AUTHORS_CONTACTS_CSV}")
-    print(f"Processed files moved to: {PROCESSED_JSONS_DIR}/")
+    print(f"Exported {len(rows)} row(s) to {AUTHORS_CONTACTS_CSV}")
+    logger.info("Exported %d rows to %s", len(rows), AUTHORS_CONTACTS_CSV)
     return 0
 
 
-def main() -> int:
-    return process_jsons_to_csv()
+# ── Markdown dump (troubleshooting / on-demand) ───────────────────────────────
 
+def dump_markdown(url: Optional[str] = None) -> int:
+    """
+    Write markdown back to disk for inspection.
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+    If `url` is given, dumps only that author.
+    If `url` is None, dumps every author that has markdown in the DB.
+
+    Files are written to data/outputs/md_dumps/{12-char url hash}.md
+    so the name is deterministic and collision-free.
+    """
+    dump_dir = OUTPUTS_DIR / "md_dumps"
+    dump_dir.mkdir(parents=True, exist_ok=True)
+
+    with get_conn() as conn:
+        if url:
+            rows = conn.execute(
+                "SELECT url, markdown FROM authors WHERE url = ?", (url,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT url, markdown FROM authors WHERE markdown IS NOT NULL"
+            ).fetchall()
+
+    if not rows:
+        print("No matching rows found in database.")
+        return 1
+
+    for row in rows:
+        slug    = hashlib.md5(row["url"].encode()).hexdigest()[:12]
+        out     = dump_dir / f"{slug}.md"
+        content = row["markdown"] or ""
+        out.write_text(content, encoding="utf-8")
+        print(f"  {row['url']}")
+        print(f"    → {out}")
+
+    print(f"\nDumped {len(rows)} file(s) to {dump_dir}/")
+    return 0
