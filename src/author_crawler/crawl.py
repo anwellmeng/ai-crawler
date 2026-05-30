@@ -40,7 +40,6 @@ logger = logging.getLogger(__name__)
 # ── Per-author crawl ──────────────────────────────────────────────────────────
  
 async def _crawl_one(
-    crawler: AsyncWebCrawler,
     url: str,
     run_config: CrawlerRunConfig,
     semaphore: asyncio.Semaphore,
@@ -48,10 +47,13 @@ async def _crawl_one(
     """
     Returns (url, markdown, error).
     Exactly one of markdown / error will be None.
+    Each author gets its own AsyncWebCrawler so browser contexts never
+    cross-contaminate (shared contexts caused "frame detached" errors).
     """
     async with semaphore:
         try:
-            results = await crawler.arun(url, config=run_config)
+            async with AsyncWebCrawler(config=BrowserConfig()) as crawler:
+                results = await crawler.arun(url, config=run_config)
             pages = [r for r in results if r.success and r.markdown]
             if not pages:
                 return url, None, "No successful pages returned"
@@ -117,23 +119,22 @@ async def crawl() -> int:
     succeeded = 0
     failed    = 0
 
-    async with AsyncWebCrawler(config=BrowserConfig()) as crawler:
-        tasks = [
-            asyncio.create_task(_crawl_one(crawler, url, run_config, semaphore))
-            for url in urls
-        ]
-        for coro in asyncio.as_completed(tasks):
-            url, markdown, error = await coro
-            if error:
-                _mark_crawl_failed(url, error)
-                failed += 1
-            else:
-                _mark_crawled(url, markdown)
-                succeeded += 1
+    tasks = [
+        asyncio.create_task(_crawl_one(url, run_config, semaphore))
+        for url in urls
+    ]
+    for coro in asyncio.as_completed(tasks):
+        url, markdown, error = await coro
+        if error:
+            _mark_crawl_failed(url, error)
+            failed += 1
+        else:
+            _mark_crawled(url, markdown)
+            succeeded += 1
 
-            completed = succeeded + failed
-            if completed % 100 == 0:
-                print(f"  {completed}/{len(urls)} complete …")
+        completed = succeeded + failed
+        if completed % 100 == 0:
+            print(f"  {completed}/{len(urls)} complete …")
 
     print(f"Crawl complete: {succeeded} succeeded, {failed} failed.")
     return 0
