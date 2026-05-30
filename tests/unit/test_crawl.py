@@ -15,13 +15,41 @@ TEST_URL = "https://example.com"
 FAKE_MARKDOWN = "Contact me at test@example.com or use my contact form."
 
 
+def _fake_result(markdown=FAKE_MARKDOWN, links=None):
+    """Build a SimpleNamespace that matches crawl4ai's CrawlResult shape."""
+    return SimpleNamespace(
+        success=True,
+        markdown=markdown,
+        links={"internal": links or [], "external": []},
+    )
+
+
 class FakeCrawler:
     def __init__(self):
         self.called_urls: list[str] = []
 
     async def arun(self, url, config=None):
         self.called_urls.append(url)
-        return [SimpleNamespace(success=True, markdown=FAKE_MARKDOWN)]
+        return _fake_result()
+
+
+class FakeCrawlerWithLinks:
+    """Simulates a site where the root page links to a /contact page."""
+
+    def __init__(self):
+        self.called_urls: list[str] = []
+
+    async def arun(self, url, config=None):
+        self.called_urls.append(url)
+        if url == TEST_URL:
+            return _fake_result(
+                markdown="Home page",
+                links=[
+                    {"href": "https://example.com/contact", "text": "Contact"},
+                    {"href": "https://example.com/blog", "text": "Blog"},
+                ],
+            )
+        return _fake_result(markdown=f"Content of {url}")
 
 
 class ErrorCrawler:
@@ -42,6 +70,65 @@ def _make_crawler_ctx(crawler_instance):
             return False
 
     return FakeCtx
+
+
+class TestContactLinks(unittest.TestCase):
+    """Unit tests for the pure _contact_links helper."""
+
+    def _result(self, links):
+        return SimpleNamespace(links={"internal": links, "external": []})
+
+    def test_returns_keyword_matched_links(self):
+        # Only CRAWL_KEYWORDS ("contact", "email") are matched — "about" is not
+        result = self._result([
+            {"href": "https://example.com/contact", "text": "Contact Us"},
+            {"href": "https://example.com/email-me", "text": "Drop me a line"},
+            {"href": "https://example.com/about", "text": "About"},
+            {"href": "https://example.com/blog", "text": "Blog"},
+        ])
+        links = crawl._contact_links(result, "https://example.com", limit=10)
+        self.assertIn("https://example.com/contact", links)
+        self.assertIn("https://example.com/email-me", links)
+        self.assertNotIn("https://example.com/about", links)
+        self.assertNotIn("https://example.com/blog", links)
+
+    def test_filters_external_links(self):
+        result = self._result([
+            {"href": "https://other.com/contact", "text": "Contact"},
+        ])
+        links = crawl._contact_links(result, "https://example.com", limit=10)
+        self.assertEqual(links, [])
+
+    def test_deduplicates(self):
+        result = self._result([
+            {"href": "https://example.com/contact", "text": "Contact"},
+            {"href": "https://example.com/contact", "text": "Contact"},
+        ])
+        links = crawl._contact_links(result, "https://example.com", limit=10)
+        self.assertEqual(links.count("https://example.com/contact"), 1)
+
+    def test_respects_limit(self):
+        result = self._result([
+            {"href": f"https://example.com/contact-{i}", "text": "Contact"}
+            for i in range(10)
+        ])
+        links = crawl._contact_links(result, "https://example.com", limit=3)
+        self.assertEqual(len(links), 3)
+
+    def test_matches_on_link_text(self):
+        result = self._result([
+            {"href": "https://example.com/reach-us", "text": "Email us"},
+        ])
+        links = crawl._contact_links(result, "https://example.com", limit=10)
+        # "email" appears in text → should be included
+        self.assertIn("https://example.com/reach-us", links)
+
+    def test_skips_base_url_itself(self):
+        result = self._result([
+            {"href": "https://example.com/", "text": "Contact home"},
+        ])
+        links = crawl._contact_links(result, "https://example.com/", limit=10)
+        self.assertEqual(links, [])
 
 
 class TestCrawl(unittest.TestCase):
@@ -77,8 +164,7 @@ class TestCrawl(unittest.TestCase):
 
     def test_crawl_stores_markdown_in_db(self):
         self._insert_url(TEST_URL)
-        fake = FakeCrawler()
-        self._run_crawl(fake)
+        self._run_crawl(FakeCrawler())
         row = self._get_row(TEST_URL)
         self.assertEqual(row["crawl_status"], "crawled")
         self.assertEqual(row["markdown"], FAKE_MARKDOWN)
@@ -104,6 +190,18 @@ class TestCrawl(unittest.TestCase):
         result = self._run_crawl(fake)
         self.assertEqual(result, 0)
         self.assertEqual(fake.called_urls, [])
+
+    def test_crawl_follows_contact_links(self):
+        """Root page contact links are crawled; non-contact links are not."""
+        self._insert_url(TEST_URL)
+        fake = FakeCrawlerWithLinks()
+        self._run_crawl(fake)
+        row = self._get_row(TEST_URL)
+        self.assertEqual(row["crawl_status"], "crawled")
+        self.assertIn("https://example.com/contact", fake.called_urls)
+        self.assertNotIn("https://example.com/blog", fake.called_urls)
+        self.assertIn("Home page", row["markdown"])
+        self.assertIn("Content of https://example.com/contact", row["markdown"])
 
 
 if __name__ == "__main__":

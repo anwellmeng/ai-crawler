@@ -48,7 +48,7 @@ class TestIngest(unittest.TestCase):
         result = self._run()
         self.assertEqual(result, 0)
         rows = self._rows()
-        self.assertEqual(len(rows), 5)
+        self.assertEqual(len(rows), len(AUTHOR_URLS))
         for row in rows:
             self.assertEqual(row["crawl_status"], "pending")
 
@@ -56,7 +56,7 @@ class TestIngest(unittest.TestCase):
         _write_csv(self.csv_path, [["url"]] + [[u] for u in AUTHOR_URLS])
         self._run()
         rows = self._rows()
-        self.assertEqual(len(rows), 5)
+        self.assertEqual(len(rows), len(AUTHOR_URLS))
         urls = {r["url"] for r in rows}
         self.assertNotIn("url", urls)
 
@@ -65,7 +65,7 @@ class TestIngest(unittest.TestCase):
         self._run()
         self._run()
         rows = self._rows()
-        self.assertEqual(len(rows), 5)
+        self.assertEqual(len(rows), len(AUTHOR_URLS))
 
     def test_ingest_preserves_crawl_status(self):
         _write_csv(self.csv_path, [[AUTHOR_URLS[0]]])

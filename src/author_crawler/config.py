@@ -15,7 +15,7 @@ AUTHORS_CONTACTS_CSV = OUTPUTS_DIR / "export.csv"
 DB_PATH = DATA_DIR / "pipeline.db"
 # -------
 # Crawl Settings
-CRAWL_CONCURRENCY = 5
+CRAWL_CONCURRENCY = 10
 CRAWL_MAX_DEPTH = 2
 CRAWL_MAX_PAGES = 8
 CRAWL_KEYWORDS = ["contact","email"]

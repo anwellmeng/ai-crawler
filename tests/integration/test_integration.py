@@ -33,7 +33,11 @@ FAKE_LLM_RESPONSE = json.dumps({
 
 class FakeCrawler:
     async def arun(self, url, config=None):
-        return [SimpleNamespace(success=True, markdown=FAKE_MARKDOWN)]
+        return SimpleNamespace(
+            success=True,
+            markdown=FAKE_MARKDOWN,
+            links={"internal": [], "external": []},
+        )
 
 
 def _make_crawler_ctx():
@@ -83,7 +87,7 @@ class TestFullPipeline(unittest.TestCase):
         self.assertEqual(result, 0)
 
         rows = self._all_rows()
-        self.assertEqual(len(rows), 5)
+        self.assertEqual(len(rows), len(AUTHOR_URLS))
         self.assertEqual({r["url"] for r in rows}, set(AUTHOR_URLS))
         for row in rows:
             self.assertEqual(row["crawl_status"], "pending")
@@ -137,7 +141,7 @@ class TestFullPipeline(unittest.TestCase):
             ingest.ingest()  # second run must not duplicate rows
 
         rows = self._all_rows()
-        self.assertEqual(len(rows), 5)
+        self.assertEqual(len(rows), len(AUTHOR_URLS))
 
         with patch.object(db, "DB_PATH", self.db_path), \
              patch.object(crawl, "AsyncWebCrawler", _make_crawler_ctx()):
