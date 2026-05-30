@@ -67,6 +67,8 @@ The pipeline has four stages that can also be run individually:
 | `crawl` | Deep-crawls each site and stores the combined page Markdown in the DB. |
 | `analyze` | Sends each site's Markdown to the LLM and extracts emails and contact form links. |
 | `export` | Writes all successfully analyzed rows to `data/outputs/export.csv`. |
+| `reset` | Resets all row statuses to `pending` so the full pipeline re-runs on the same URLs. |
+| `reset --hard` | Deletes the database entirely for a completely clean slate. |
 
 ```bash
 python src/author_crawler/pipeline.py ingest
@@ -113,6 +115,15 @@ This writes the stored Markdown to `data/outputs/md_dumps/` so you can see exact
 python src/author_crawler/pipeline.py dump-md
 ```
 
+**Start a fresh run on the same URLs:**
+
+```bash
+python src/author_crawler/pipeline.py reset
+python src/author_crawler/pipeline.py run
+```
+
+Use `reset --hard` instead to also wipe the URL list (you'll need to re-ingest `authors.csv`).
+
 **Re-analyze a failed row** — update its status directly in the database, then re-run analyze:
 
 ```bash
@@ -134,9 +145,9 @@ CRAWL_MAX_DEPTH   = 2       # how many link-hops deep to follow
 CRAWL_MAX_PAGES   = 8       # max pages fetched per site
 
 # LLM settings
-LLM_MODEL         = "openai/gpt-oss-20b:free"   # any OpenRouter model ID
+LLM_MODEL         = "openai/gpt-oss-20b"   # any OpenRouter model ID
 LLM_CONCURRENCY   = 10      # simultaneous API calls
-LLM_TOKEN_LIMIT   = 122_000 # markdown is truncated to this before sending
+LLM_TOKEN_LIMIT   = 128_000 # markdown is truncated to this before sending
 ```
 
 To switch LLM models, replace `LLM_MODEL` with any model available on [OpenRouter](https://openrouter.ai/models). Free-tier models may be rate-limited under heavy load — a paid model will be more reliable for large batches.

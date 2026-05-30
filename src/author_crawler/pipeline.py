@@ -10,8 +10,11 @@ Usage
   python pipeline.py export          Write results to CSV
   python pipeline.py run             Run all four stages in sequence
   python pipeline.py status          Show per-stage row counts
-  python pipeline.py dump-md         Dump all markdown to disk
-  python pipeline.py dump-md <url>   Dump one author's markdown to disk
+  python pipeline.py reset              Reset all rows to pending (keeps URLs)
+  python pipeline.py reset --hard       Delete the database entirely
+  python pipeline.py debug-analyze <url> Replay LLM call and print raw response
+  python pipeline.py dump-md            Dump all markdown to disk
+  python pipeline.py dump-md <url>      Dump one author's markdown to disk
 """
 
 from __future__ import annotations
@@ -126,6 +129,89 @@ def cmd_status(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reset(args: argparse.Namespace) -> int:
+    from config import DB_PATH
+    if args.hard:
+        if DB_PATH.exists():
+            DB_PATH.unlink()
+            print(f"Deleted {DB_PATH}.")
+        else:
+            print("No database found — nothing to delete.")
+        return 0
+    with get_conn() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM authors").fetchone()[0]
+        conn.execute("""
+            UPDATE authors
+            SET crawl_status   = 'pending',
+                analyze_status = 'pending',
+                markdown       = NULL,
+                emails         = NULL,
+                contact_links  = NULL,
+                crawl_error    = NULL,
+                analyze_error  = NULL,
+                updated_at     = datetime('now')
+        """)
+    print(f"Reset {n} row(s) to pending.")
+    return 0
+
+
+def cmd_debug_analyze(args: argparse.Namespace) -> int:
+    """Replay the LLM call for a single URL and print the raw response."""
+    import asyncio, os
+    from dotenv import load_dotenv
+    from openai import AsyncOpenAI
+    from pathlib import Path
+    from analyze import SYSTEM_PROMPT, _truncate, _token_count
+    from config import LLM_CONCURRENCY, LLM_MAX_TOKENS, LLM_MODEL, LLM_TOKEN_LIMIT
+
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT url, markdown, analyze_status FROM authors WHERE url = ?",
+            (args.url,),
+        ).fetchone()
+
+    if not row:
+        print(f"URL not found in database: {args.url}")
+        return 1
+
+    print(f"analyze_status : {row['analyze_status']}")
+    markdown = row["markdown"] or ""
+    tok = _token_count(markdown)
+    print(f"markdown tokens: {tok}")
+
+    if tok > LLM_TOKEN_LIMIT:
+        markdown = _truncate(markdown, LLM_TOKEN_LIMIT)
+        print(f"(truncated to {LLM_TOKEN_LIMIT} tokens before sending)")
+
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        print("Error: OPENROUTER_API_KEY is not set.")
+        return 1
+
+    client = AsyncOpenAI(
+        api_key=api_key,
+        base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+    )
+
+    async def _call() -> str:
+        completion = await client.chat.completions.create(
+            model=LLM_MODEL,
+            max_tokens=LLM_MAX_TOKENS,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": markdown},
+            ],
+        )
+        return completion.choices[0].message.content
+
+    print("\n── raw LLM response ──────────────────────────────────────────────")
+    print(asyncio.run(_call()))
+    print("──────────────────────────────────────────────────────────────────")
+    return 0
+
+
 def cmd_dump_md(args: argparse.Namespace) -> int:
     from export import dump_markdown
     return dump_markdown(args.url)
@@ -140,7 +226,9 @@ _COMMANDS = {
     "export":   cmd_export,
     "run":      cmd_run,
     "status":   cmd_status,
-    "dump-md":  cmd_dump_md,
+    "reset":          cmd_reset,
+    "debug-analyze":  cmd_debug_analyze,
+    "dump-md":        cmd_dump_md,
 }
 
 
@@ -160,6 +248,16 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("export",  help="Write results to CSV")
     sub.add_parser("run",     help="Run all stages in sequence")
     sub.add_parser("status",  help="Show per-stage row counts")
+
+    reset = sub.add_parser("reset", help="Reset pipeline state for a fresh run")
+    reset.add_argument(
+        "--hard",
+        action="store_true",
+        help="Delete the database entirely instead of resetting row statuses",
+    )
+
+    debug = sub.add_parser("debug-analyze", help="Replay LLM call for one URL and print raw response")
+    debug.add_argument("url", help="Author URL to debug")
 
     dump = sub.add_parser("dump-md", help="Write markdown to disk for inspection")
     dump.add_argument(

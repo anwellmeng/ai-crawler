@@ -22,7 +22,7 @@ CRAWL_KEYWORDS = ["contact","email"]
 CRAWL_KEYWORD_WEIGHT = 0.7
 # -------
 # LLM Settings
-LLM_MODEL       = "openai/gpt-oss-20b:free"
+LLM_MODEL       = "openai/gpt-oss-20b"
 LLM_MAX_TOKENS  = 1_000
 LLM_CONCURRENCY = 10       # simultaneous API calls
-LLM_TOKEN_LIMIT = 122_000  # markdown truncated to this before sending
+LLM_TOKEN_LIMIT = 128_000  # markdown truncated to this before sending (model ctx=131K, ~3K reserved for system prompt + output)

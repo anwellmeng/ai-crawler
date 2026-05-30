@@ -35,38 +35,22 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You extract contact info from scraped author-website Markdown.
+SYSTEM_PROMPT = """Reasoning: low
 
-INPUT: One Markdown string (may contain multiple pages). Links may be absolute or relative. Emails may be obfuscated (e.g., "name [at] domain [dot] com", "name(at)domain(dot)com", "name at domain dot com"), include spaces, or zero-width chars.
+Extract contact info from author-website Markdown. Return ONLY this JSON, no prose:
+{"emails": [...], "contact_links": [...]}
 
-TASK: Find
-1) author email addresses
-2) links to a contact form
+EMAILS — all professional contacts for reaching the author:
+- Include: author's own email, literary agent, publicist, booking contacts
+- Exclude: newsletter signups, social DMs, generic support, obvious decoys (e.g. example@example.com)
+- Normalize obfuscated addresses ("name [at] domain [dot] com" -> "name@domain.com"); lowercase; deduplicate
 
-OUTPUT: Return ONLY a single JSON object (no code fences, no prose):
-{"emails":[...],"contact_links":[...]}
+CONTACT FORMS — URLs of pages containing a contact/message form:
+- On-site forms preferred; Typeform/Google Forms acceptable if the author uses them
+- Do not include mailto: links
+- Resolve relative paths against any base URL present in the Markdown
 
-RULES
-- Always include both keys; if none, use empty arrays.
-- Do not guess or invent data.
-- Deduplicate. Priority order: author > agent/publicist > publisher/booking.
-- Exclude: newsletter signups, press kits, social DMs, RSS, generic support portals.
-- No extra prose in your response.
-
-EMAILS
-- Accept from visible text and mailto:.
-- Normalize: lowercase; replace [at]/(at)/" at " -> "@"; [dot]/(dot)/" dot " -> "."; remove spaces/zero-width.
-- Validate simple pattern: local@domain.tld, tld 2-24 letters.
-- Discard obvious decoys like example@example.com.
-
-CONTACT FORMS
-- Include pages that host a contact form or clearly instruct submitting a message.
-- Prefer on-site forms; if none, include reputable off-site forms used by the author (Typeform, Google Forms).
-- Do NOT count mailto: as a contact form.
-- If a <form> action is shown, include the PAGE URL containing it.
-- If a base URL is present in the Markdown (e.g., "Source: https://site.com/page"), resolve relative paths against it; otherwise return the relative path.
-
-END: Output exactly the JSON object per schema above.
+Use empty arrays if nothing is found.
 """
 
 # Markdown shorter than this is assumed to be bot-blocked or blank.
