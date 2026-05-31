@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 from config import AUTHORS_CSV
 from db import get_conn, init_db
+from utils import is_blocked_url
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ def ingest() -> int:
 
     inserted = 0
     skipped = 0
+    blocked = 0
 
     with AUTHORS_CSV.open(newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
@@ -56,6 +58,10 @@ def ingest() -> int:
 
                 url = row[0].strip()
 
+                if is_blocked_url(url):
+                    blocked += 1
+                    continue
+
                 conn.execute(
                     "INSERT OR IGNORE INTO authors (url) VALUES (?)",
                     (url,),
@@ -67,8 +73,9 @@ def ingest() -> int:
                 else:
                     skipped += 1
 
-    logger.info("Ingest complete: %d new, %d already present", inserted, skipped)
-    print(f"Ingested {inserted} new author(s). ({skipped} already in database.)")
+    logger.info("Ingest complete: %d new, %d already present, %d blocked", inserted, skipped, blocked)
+    blocked_msg = f" {blocked} blocked domain(s) skipped." if blocked else ""
+    print(f"Ingested {inserted} new author(s). ({skipped} already in database.{blocked_msg})")
     return 0
 
 

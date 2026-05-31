@@ -99,6 +99,37 @@ class TestExport(unittest.TestCase):
             rows = list(csv.DictReader(f))
         self.assertEqual(len(rows), 3)
 
+    def test_blocked_contact_links_are_stripped(self):
+        self._insert_row(
+            "https://example.com/",
+            emails="a@b.com",
+            contact_links="https://example.com/contact;https://www.amazon.com/dp/B001;https://facebook.com/page",
+        )
+        self._run_export()
+        with self.csv_path.open() as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual(rows[0]["contact_links"], "https://example.com/contact")
+
+    def test_all_contact_links_blocked_yields_empty(self):
+        self._insert_row(
+            "https://example.com/",
+            contact_links="https://instagram.com/author;https://twitter.com/author",
+        )
+        self._run_export()
+        with self.csv_path.open() as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual(rows[0]["contact_links"], "")
+
+    def test_amazon_shortener_links_stripped(self):
+        self._insert_row(
+            "https://example.com/",
+            contact_links="https://amzn.to/abc;https://a.co/xyz;https://example.com/contact",
+        )
+        self._run_export()
+        with self.csv_path.open() as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual(rows[0]["contact_links"], "https://example.com/contact")
+
 
 class TestDumpMarkdown(unittest.TestCase):
     def setUp(self):

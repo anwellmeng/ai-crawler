@@ -84,6 +84,37 @@ class TestIngest(unittest.TestCase):
         result = self._run()
         self.assertEqual(result, 1)
 
+    def test_ingest_skips_blocked_domains(self):
+        blocked = [
+            "https://www.amazon.com/dp/B001234",
+            "https://amzn.to/abc123",
+            "https://a.co/xyz",
+            "https://facebook.com/authorname",
+            "https://m.instagram.com/author",
+            "https://twitter.com/author",
+            "https://x.com/author",
+            "https://linkedin.com/in/author",
+            "https://youtube.com/channel/abc",
+            "https://tiktok.com/@author",
+            "https://pinterest.com/author",
+            "https://goodreads.com/author/show/123",
+        ]
+        _write_csv(self.csv_path, [[u] for u in blocked] + [["https://example.com"]])
+        self._run()
+        rows = self._rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["url"], "https://example.com")
+
+    def test_ingest_blocked_domains_not_counted_as_skipped(self, capsys=None):
+        _write_csv(self.csv_path, [
+            ["https://amazon.com/dp/B001"],
+            ["https://example.com"],
+        ])
+        result = self._run()
+        self.assertEqual(result, 0)
+        rows = self._rows()
+        self.assertEqual(len(rows), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

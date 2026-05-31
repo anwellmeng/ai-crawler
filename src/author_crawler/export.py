@@ -20,11 +20,18 @@ from typing import Optional
 
 from config import AUTHORS_CONTACTS_CSV, OUTPUTS_DIR
 from db import get_conn
+from utils import is_blocked_url
 
 logger = logging.getLogger(__name__)
 
 
 # ── CSV export ────────────────────────────────────────────────────────────────
+
+def _filter_links(links_str: str | None) -> str:
+    if not links_str:
+        return ""
+    return ";".join(l for l in links_str.split(";") if l and not is_blocked_url(l))
+
 
 def export() -> int:
     with get_conn() as conn:
@@ -46,8 +53,8 @@ def export() -> int:
         for row in rows:
             writer.writerow([
                 row["url"],
-                row["emails"]        or "",
-                row["contact_links"] or "",
+                row["emails"] or "",
+                _filter_links(row["contact_links"]),
             ])
 
     print(f"Exported {len(rows)} row(s) to {AUTHORS_CONTACTS_CSV}")

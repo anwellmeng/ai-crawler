@@ -21,6 +21,25 @@ CRAWL_MAX_PAGES = 8
 CRAWL_KEYWORDS = ["contact","email"]
 CRAWL_KEYWORD_WEIGHT = 0.7
 # -------
+# Blocked domains — URLs on these domains are skipped at ingest and stripped
+# from contact_links at export. Subdomains (e.g. m.facebook.com) are matched too.
+BLOCKED_DOMAINS: frozenset = frozenset([
+    # Amazon storefronts and shorteners
+    "amazon.com", "amazon.co.uk", "amazon.ca", "amazon.com.au",
+    "amazon.de", "amazon.fr", "amazon.es", "amazon.it",
+    "amzn.to", "a.co",
+    # Social media
+    "facebook.com", "fb.com",
+    "instagram.com",
+    "twitter.com", "x.com",
+    "linkedin.com",
+    "youtube.com", "youtu.be",
+    "tiktok.com",
+    "pinterest.com",
+    # Book catalogues (not author contact pages)
+    "goodreads.com",
+])
+# -------
 # LLM Settings
 LLM_MODEL       = "openai/gpt-oss-20b"
 LLM_MAX_TOKENS  = 1_000
