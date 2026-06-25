@@ -53,7 +53,11 @@ python src/author_crawler/pipeline.py run
 python src/author_crawler/pipeline.py status
 ```
 
-The output CSV is written to `data/outputs/export.csv` when the pipeline finishes.
+The output CSV is written to `data/outputs/export.csv` when the pipeline finishes. By default it contains only the sites from your **most recent ingestion** — the URLs in the input file you just ran. To include every site analyzed across all past runs, add `--all`:
+
+```bash
+python src/author_crawler/pipeline.py run --all
+```
 
 ---
 
@@ -63,10 +67,10 @@ The pipeline has four stages that can also be run individually:
 
 | Command | What it does |
 |---|---|
-| `ingest` | Loads `authors.csv` into the database. Safe to re-run — existing rows are never touched. |
+| `ingest` | Loads `authors.csv` into the database and tags every URL in the file with a new ingestion batch. Safe to re-run — crawl/analyze progress is never touched. |
 | `crawl` | Deep-crawls each site and stores the combined page Markdown in the DB. |
 | `analyze` | Sends each site's Markdown to the LLM and extracts emails and contact form links. |
-| `export` | Writes all successfully analyzed rows to `data/outputs/export.csv`. |
+| `export` | Writes the most recent ingestion's analyzed rows to `data/outputs/export.csv`. Add `--all` (`-a`) to export every analyzed row across all past ingestions. |
 | `reset` | Resets all row statuses to `pending` so the full pipeline re-runs on the same URLs. |
 | `reset --hard` | Deletes the database entirely for a completely clean slate. |
 
@@ -74,7 +78,8 @@ The pipeline has four stages that can also be run individually:
 python src/author_crawler/pipeline.py ingest
 python src/author_crawler/pipeline.py crawl
 python src/author_crawler/pipeline.py analyze
-python src/author_crawler/pipeline.py export
+python src/author_crawler/pipeline.py export        # latest ingestion only
+python src/author_crawler/pipeline.py export --all  # every analyzed row
 ```
 
 ---

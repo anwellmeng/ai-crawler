@@ -19,7 +19,10 @@ python src/author_crawler/pipeline.py ingest
 python src/author_crawler/pipeline.py ingest --input data/inputs/my_authors.csv
 python src/author_crawler/pipeline.py crawl
 python src/author_crawler/pipeline.py analyze
+# Export only the most recent ingestion (default)
 python src/author_crawler/pipeline.py export
+# Export every analyzed row across all past ingestions
+python src/author_crawler/pipeline.py export --all
 
 # Check pipeline progress
 python src/author_crawler/pipeline.py status
@@ -96,17 +99,17 @@ Four-stage pipeline: a CSV of author website URLs goes in, a CSV of contact info
 
 **Stages (in order):**
 
-1. **Ingest** (`ingest.py`) — reads the first column of `data/inputs/authors.csv` and upserts each URL via `INSERT OR IGNORE`. Reruns are always safe; existing rows and their progress are never touched.
+1. **Ingest** (`ingest.py`) — reads the first column of `data/inputs/authors.csv` and upserts each URL. Each ingest run computes one new `batch_id` (`MAX(batch_id)+1`) and stamps it onto **every** URL in the input file — both newly inserted rows and pre-existing ones (via `ON CONFLICT(url) DO UPDATE`). Crawl/analyze progress is never touched; only `batch_id`/`updated_at` move, so the most recent ingestion always equals exactly the URLs named in the latest input file.
 
 2. **Crawl** (`crawl.py`) — reads `crawl_status='pending'` rows, concurrently deep-crawls each site using `crawl4ai`'s `BestFirstCrawlingStrategy` with `KeywordRelevanceScorer` (keywords: `contact`, `email`), bounded by `asyncio.Semaphore(CRAWL_CONCURRENCY)`. Uses `asyncio.as_completed` for streaming. Writes combined per-author Markdown as a TEXT column directly to the DB row. DB writes are sequential in the main coroutine to avoid write contention.
 
 3. **Analyze** (`analyze.py`) — reads rows where `crawl_status='crawled' AND analyze_status='pending'`, sends Markdown to the LLM via `AsyncOpenAI` pointed at OpenRouter's base URL. Bounded by `asyncio.Semaphore(LLM_CONCURRENCY)`. Writes `emails` and `contact_links` as semicolon-separated strings back to the DB. Status transitions: `pending → done | failed | skipped` (skipped if token count exceeds `LLM_TOKEN_LIMIT`).
 
-4. **Export** (`export.py`) — reads `analyze_status='done'` rows and writes a fresh CSV (always write mode, never append) to `data/outputs/export.csv` with three columns: `url`, `emails`, `contact_links`. Also provides `dump_markdown(url=None)` to reconstruct `.md` files from DB on demand, written to `data/outputs/md_dumps/{md5(url)[:12]}.md`.
+4. **Export** (`export.py`) — reads `analyze_status='done'` rows and writes a fresh CSV (always write mode, never append) to `data/outputs/export.csv` with three columns: `url`, `emails`, `contact_links`. By default it scopes to the most recent ingestion (`batch_id = (SELECT MAX(batch_id) ...)`); `export(all_batches=True)` (CLI `--all`/`-a`, also accepted by `run`) exports every analyzed row across all ingestions. Also provides `dump_markdown(url=None)` to reconstruct `.md` files from DB on demand, written to `data/outputs/md_dumps/{md5(url)[:12]}.md`.
 
 **Entry point** (`pipeline.py`) — single CLI tying all stages together. Commands: `ingest`, `crawl`, `analyze`, `export`, `run` (all four in sequence), `status` (per-stage row counts), `dump-md`. Calls `init_db()` at startup (idempotent). Logging goes to `logs/pipeline.log` (file only); user-facing progress uses `print()`.
 
-**DB schema** (`db.py`) — single `authors` table, `url` as PRIMARY KEY. `crawl_status` and `analyze_status` columns are the only inter-stage communication. Additional columns: `markdown` (TEXT), `crawl_error`, `analyze_error`, `emails`, `contact_links` (semicolons), `created_at`, `updated_at`. `get_conn()` is the sole DB access point (WAL mode, `row_factory=sqlite3.Row`, auto-commit/rollback context manager). `init_db()` is safe to call on every startup.
+**DB schema** (`db.py`) — single `authors` table, `url` as PRIMARY KEY. `crawl_status` and `analyze_status` columns are the only inter-stage communication. Additional columns: `markdown` (TEXT), `crawl_error`, `analyze_error`, `emails`, `contact_links` (semicolons), `batch_id` (INTEGER — the ingestion run that last claimed this URL; export scopes to the latest), `created_at`, `updated_at`. `get_conn()` is the sole DB access point (WAL mode, `row_factory=sqlite3.Row`, auto-commit/rollback context manager). `init_db()` is safe to call on every startup and migrates pre-`batch_id` databases (adds the column, folds legacy rows into batch 0).
 
 **Config** (`config.py`) — all paths and tunable parameters in one place, no logic. Imported as `from config import ...` (bare module name), so all stage scripts must be run with `src/author_crawler/` on `sys.path` — the `pipeline.py` entry point handles this automatically. Crawl settings (`CRAWL_CONCURRENCY`, `CRAWL_MAX_DEPTH`, `CRAWL_MAX_PAGES`, `CRAWL_KEYWORDS`, `CRAWL_KEYWORD_WEIGHT`) and LLM settings (`LLM_MODEL`, `LLM_MAX_TOKENS`, `LLM_CONCURRENCY`, `LLM_TOKEN_LIMIT`) live here.
 
@@ -129,3 +132,6 @@ Four-stage pipeline: a CSV of author website URLs goes in, a CSV of contact info
 Tests use `unittest` with `patch.object(db, "DB_PATH", tmp_path)` to redirect all DB access to a temp file — every test that touches the DB must apply this patch. Integration test fixtures (`AUTHOR_URLS`, `make_authors_csv`) live in `tests/integration/__init__.py`.
 
 The `scripts/` directory contains pre-refactor file-based scripts and is not part of the current pipeline.
+
+## Preferences
+* Use python3 instead of python when running or showing me any bash commands.
