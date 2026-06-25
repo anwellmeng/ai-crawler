@@ -4,11 +4,11 @@ Author contact extraction pipeline.
 
 Usage
 -----
-  python pipeline.py ingest          Load authors.csv into the database
+  python pipeline.py ingest [-i FILE] Load authors.csv (or FILE) into the database
   python pipeline.py crawl           Crawl pending author websites
   python pipeline.py analyze         Analyze crawled markdown with LLM
   python pipeline.py export          Write results to CSV
-  python pipeline.py run             Run all four stages in sequence
+  python pipeline.py run [-i FILE]   Run all four stages in sequence
   python pipeline.py status          Show per-stage row counts
   python pipeline.py reset              Reset all rows to pending (keeps URLs)
   python pipeline.py reset --hard       Delete the database entirely
@@ -51,9 +51,9 @@ def _configure_logging() -> None:
 
 # ── Command handlers ──────────────────────────────────────────────────────────
 
-def cmd_ingest(_args: argparse.Namespace) -> int:
+def cmd_ingest(args: argparse.Namespace) -> int:
     from ingest import ingest
-    return ingest()
+    return ingest(args.input)
 
 
 def cmd_crawl(_args: argparse.Namespace) -> int:
@@ -71,7 +71,7 @@ def cmd_export(_args: argparse.Namespace) -> int:
     return export()
 
 
-def cmd_run(_args: argparse.Namespace) -> int:
+def cmd_run(args: argparse.Namespace) -> int:
     """Run all stages in sequence, stopping on the first non-zero exit."""
     from ingest  import ingest
     from crawl   import crawl
@@ -79,10 +79,10 @@ def cmd_run(_args: argparse.Namespace) -> int:
     from export  import export
 
     stages = [
-        ("ingest",  ingest,  False),
-        ("crawl",   crawl,   True),
-        ("analyze", analyze, True),
-        ("export",  export,  False),
+        ("ingest",  lambda: ingest(args.input), False),
+        ("crawl",   crawl,                      True),
+        ("analyze", analyze,                    True),
+        ("export",  export,                     False),
     ]
 
     for name, fn, is_async in stages:
@@ -242,11 +242,18 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", metavar="command")
     sub.required = True
 
-    sub.add_parser("ingest",  help="Load authors.csv into the database")
+    _input_help = "CSV file to ingest (default: data/inputs/authors.csv)"
+
+    ingest_p = sub.add_parser("ingest", help="Load a CSV of author URLs into the database")
+    ingest_p.add_argument("--input", "-i", metavar="FILE", default=None, help=_input_help)
+
     sub.add_parser("crawl",   help="Crawl pending author websites")
     sub.add_parser("analyze", help="Analyze crawled markdown with LLM")
     sub.add_parser("export",  help="Write results to CSV")
-    sub.add_parser("run",     help="Run all stages in sequence")
+
+    run_p = sub.add_parser("run", help="Run all stages in sequence")
+    run_p.add_argument("--input", "-i", metavar="FILE", default=None, help=_input_help)
+
     sub.add_parser("status",  help="Show per-stage row counts")
 
     reset = sub.add_parser("reset", help="Reset pipeline state for a fresh run")

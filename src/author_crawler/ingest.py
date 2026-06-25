@@ -12,6 +12,7 @@ import csv
 import itertools
 import logging
 import sys
+from pathlib import Path
 from urllib.parse import urlparse
 
 from config import AUTHORS_CSV
@@ -33,19 +34,21 @@ def _looks_like_header(value: str) -> bool:
     return not (parsed.scheme and parsed.netloc)
 
 
-def ingest() -> int:
+def ingest(csv_path: Path | None = None) -> int:
     init_db()
 
-    if not AUTHORS_CSV.exists():
-        logger.error("Authors CSV not found: %s", AUTHORS_CSV)
-        print(f"Error: {AUTHORS_CSV} not found.")
+    path = Path(csv_path) if csv_path else AUTHORS_CSV
+
+    if not path.exists():
+        logger.error("Authors CSV not found: %s", path)
+        print(f"Error: {path} not found.")
         return 1
 
     inserted = 0
     skipped = 0
     blocked = 0
 
-    with AUTHORS_CSV.open(newline="", encoding="utf-8") as f:
+    with path.open(newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
         first_row = next(reader, None)
         with get_conn() as conn:
@@ -73,7 +76,7 @@ def ingest() -> int:
                 else:
                     skipped += 1
 
-    logger.info("Ingest complete: %d new, %d already present, %d blocked", inserted, skipped, blocked)
+    logger.info("Ingest complete (%s): %d new, %d already present, %d blocked", path, inserted, skipped, blocked)
     blocked_msg = f" {blocked} blocked domain(s) skipped." if blocked else ""
     print(f"Ingested {inserted} new author(s). ({skipped} already in database.{blocked_msg})")
     return 0
