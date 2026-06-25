@@ -28,7 +28,7 @@ class TestInitDb(unittest.TestCase):
         expected = {
             "url", "crawl_status", "markdown", "crawl_error",
             "analyze_status", "analyze_error", "emails", "contact_links",
-            "created_at", "updated_at",
+            "batch_id", "created_at", "updated_at",
         }
         self.assertTrue(expected.issubset(cols))
 
@@ -37,6 +37,31 @@ class TestInitDb(unittest.TestCase):
         with tmp, patch.object(db, "DB_PATH", db_path):
             db.init_db()
             db.init_db()  # second call must not raise
+
+    def test_migrates_pre_batch_database(self):
+        """A legacy DB without batch_id is migrated and its rows folded into batch 0."""
+        tmp, db_path = _temp_db()
+        with tmp, patch.object(db, "DB_PATH", db_path):
+            # Simulate a pre-batch schema: the real columns, minus batch_id.
+            with db.get_conn() as conn:
+                conn.execute(
+                    """CREATE TABLE authors (
+                           url            TEXT PRIMARY KEY,
+                           crawl_status   TEXT NOT NULL DEFAULT 'pending',
+                           analyze_status TEXT NOT NULL DEFAULT 'pending'
+                       )"""
+                )
+                conn.execute("INSERT INTO authors (url) VALUES ('https://legacy.com/')")
+
+            db.init_db()  # should ALTER TABLE and backfill
+
+            with db.get_conn() as conn:
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(authors)")}
+                batch = conn.execute(
+                    "SELECT batch_id FROM authors WHERE url = 'https://legacy.com/'"
+                ).fetchone()[0]
+        self.assertIn("batch_id", cols)
+        self.assertEqual(batch, 0)
 
 
 class TestGetConn(unittest.TestCase):

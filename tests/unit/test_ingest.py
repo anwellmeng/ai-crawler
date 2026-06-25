@@ -80,6 +80,50 @@ class TestIngest(unittest.TestCase):
         rows = self._rows()
         self.assertEqual(rows[0]["crawl_status"], "crawled")
 
+    def test_first_ingest_stamps_batch_one(self):
+        _write_csv(self.csv_path, [[u] for u in AUTHOR_URLS])
+        self._run()
+        rows = self._rows()
+        self.assertTrue(all(r["batch_id"] == 1 for r in rows))
+
+    def test_second_ingest_of_new_file_increments_batch(self):
+        _write_csv(self.csv_path, [[AUTHOR_URLS[0]]])
+        self._run()  # batch 1
+        _write_csv(self.csv_path, [[AUTHOR_URLS[1]]])
+        self._run()  # batch 2
+        with patch.object(db, "DB_PATH", self.db_path):
+            with db.get_conn() as conn:
+                b1 = conn.execute(
+                    "SELECT batch_id FROM authors WHERE url = ?", (AUTHOR_URLS[0],)
+                ).fetchone()[0]
+                b2 = conn.execute(
+                    "SELECT batch_id FROM authors WHERE url = ?", (AUTHOR_URLS[1],)
+                ).fetchone()[0]
+        self.assertEqual(b1, 1)
+        self.assertEqual(b2, 2)
+
+    def test_reingest_restamps_existing_url_to_latest_batch(self):
+        # An existing URL re-fed in a later run moves to the newest batch,
+        # but keeps its crawl progress.
+        _write_csv(self.csv_path, [[AUTHOR_URLS[0]]])
+        self._run()  # batch 1
+        with patch.object(db, "DB_PATH", self.db_path):
+            with db.get_conn() as conn:
+                conn.execute(
+                    "UPDATE authors SET crawl_status = 'crawled' WHERE url = ?",
+                    (AUTHOR_URLS[0],),
+                )
+        _write_csv(self.csv_path, [[AUTHOR_URLS[1]], [AUTHOR_URLS[0]]])
+        self._run()  # batch 2 — claims both
+        with patch.object(db, "DB_PATH", self.db_path):
+            with db.get_conn() as conn:
+                row = conn.execute(
+                    "SELECT batch_id, crawl_status FROM authors WHERE url = ?",
+                    (AUTHOR_URLS[0],),
+                ).fetchone()
+        self.assertEqual(row["batch_id"], 2)
+        self.assertEqual(row["crawl_status"], "crawled")
+
     def test_ingest_missing_csv(self):
         result = self._run()
         self.assertEqual(result, 1)

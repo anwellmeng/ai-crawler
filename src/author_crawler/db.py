@@ -49,10 +49,19 @@ def init_db() -> None:
                 emails           TEXT,   -- semicolon-separated
                 contact_links    TEXT,   -- semicolon-separated
 
+                -- ingestion batch: stamped by ingest, scopes export to a single run
+                batch_id         INTEGER,
+
                 created_at       TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
+        # Migrate pre-batch databases: add the column and fold legacy rows into
+        # batch 0 so the first new ingest becomes batch 1+ and export can scope.
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(authors)")}
+        if "batch_id" not in columns:
+            conn.execute("ALTER TABLE authors ADD COLUMN batch_id INTEGER")
+        conn.execute("UPDATE authors SET batch_id = 0 WHERE batch_id IS NULL")
         # Indexes on status columns so stage queries stay fast at 6k rows.
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_crawl_status
@@ -61,4 +70,8 @@ def init_db() -> None:
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_analyze_status
             ON authors (analyze_status)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_batch_id
+            ON authors (batch_id)
         """)

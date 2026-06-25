@@ -162,7 +162,7 @@ class TestFullPipeline(unittest.TestCase):
              patch.object(analyze, "AsyncOpenAI", _make_fake_openai()), \
              patch.object(export, "AUTHORS_CONTACTS_CSV", out_csv), \
              patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
-            result = pipeline.cmd_run(argparse.Namespace())
+            result = pipeline.cmd_run(argparse.Namespace(input=None, all=False))
 
         self.assertEqual(result, 0)
         self.assertTrue(out_csv.exists())
@@ -179,7 +179,7 @@ class TestFullPipeline(unittest.TestCase):
         """cmd_run stops and returns non-zero if any stage fails."""
         with patch.object(db, "DB_PATH", self.db_path), \
              patch.object(ingest, "AUTHORS_CSV", self.tmp / "nonexistent.csv"):
-            result = pipeline.cmd_run(argparse.Namespace())
+            result = pipeline.cmd_run(argparse.Namespace(input=None, all=False))
 
         self.assertNotEqual(result, 0)
         # crawl never ran — all rows still pending (table is empty in this case)

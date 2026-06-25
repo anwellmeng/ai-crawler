@@ -67,6 +67,27 @@ class TestBuildParser(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.parser.parse_args(["crawl", "--input", "x.csv"])
 
+    # --all / -a on export and run
+    def test_export_all_long_flag(self):
+        args = self.parser.parse_args(["export", "--all"])
+        self.assertTrue(args.all)
+
+    def test_export_all_short_flag(self):
+        args = self.parser.parse_args(["export", "-a"])
+        self.assertTrue(args.all)
+
+    def test_export_all_default_is_false(self):
+        args = self.parser.parse_args(["export"])
+        self.assertFalse(args.all)
+
+    def test_run_all_flag(self):
+        args = self.parser.parse_args(["run", "-a"])
+        self.assertTrue(args.all)
+
+    def test_run_all_default_is_false(self):
+        args = self.parser.parse_args(["run"])
+        self.assertFalse(args.all)
+
 
 class TestCmdIngestInputRouting(unittest.TestCase):
     """cmd_ingest must forward args.input to ingest()."""
@@ -85,6 +106,23 @@ class TestCmdIngestInputRouting(unittest.TestCase):
     def test_forwards_none_when_no_flag(self):
         mock = self._run(None)
         mock.assert_called_once_with(None)
+
+
+class TestCmdExportAllRouting(unittest.TestCase):
+    """cmd_export must forward args.all to export(all_batches=...)."""
+
+    def _run(self, all_val):
+        args = argparse.Namespace(all=all_val)
+        mock = MagicMock(return_value=0)
+        with patch.object(export, "export", mock):
+            pipeline.cmd_export(args)
+        return mock
+
+    def test_forwards_all_true(self):
+        self._run(True).assert_called_once_with(all_batches=True)
+
+    def test_forwards_all_false(self):
+        self._run(False).assert_called_once_with(all_batches=False)
 
 
 class TestCmdRunInputRouting(unittest.TestCase):
@@ -115,10 +153,10 @@ class TestCmdRunInputRouting(unittest.TestCase):
         async def fake_analyze():
             return 0
 
-        def fake_export():
+        def fake_export(all_batches=False):
             return 0
 
-        args = argparse.Namespace(input=input_val)
+        args = argparse.Namespace(input=input_val, all=False)
         # cmd_run does local imports ("from ingest import ingest"), so patch
         # the function on the already-loaded module object.
         import crawl as crawl_mod

@@ -7,8 +7,8 @@ Usage
   python pipeline.py ingest [-i FILE] Load authors.csv (or FILE) into the database
   python pipeline.py crawl           Crawl pending author websites
   python pipeline.py analyze         Analyze crawled markdown with LLM
-  python pipeline.py export          Write results to CSV
-  python pipeline.py run [-i FILE]   Run all four stages in sequence
+  python pipeline.py export [-a]     Write results to CSV (latest ingestion; -a for all)
+  python pipeline.py run [-i FILE] [-a] Run all four stages in sequence
   python pipeline.py status          Show per-stage row counts
   python pipeline.py reset              Reset all rows to pending (keeps URLs)
   python pipeline.py reset --hard       Delete the database entirely
@@ -66,9 +66,9 @@ def cmd_analyze(_args: argparse.Namespace) -> int:
     return asyncio.run(analyze())
 
 
-def cmd_export(_args: argparse.Namespace) -> int:
+def cmd_export(args: argparse.Namespace) -> int:
     from export import export
-    return export()
+    return export(all_batches=args.all)
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -79,10 +79,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     from export  import export
 
     stages = [
-        ("ingest",  lambda: ingest(args.input), False),
-        ("crawl",   crawl,                      True),
-        ("analyze", analyze,                    True),
-        ("export",  export,                     False),
+        ("ingest",  lambda: ingest(args.input),            False),
+        ("crawl",   crawl,                                 True),
+        ("analyze", analyze,                               True),
+        ("export",  lambda: export(all_batches=args.all),  False),
     ]
 
     for name, fn, is_async in stages:
@@ -247,12 +247,16 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest_p = sub.add_parser("ingest", help="Load a CSV of author URLs into the database")
     ingest_p.add_argument("--input", "-i", metavar="FILE", default=None, help=_input_help)
 
+    _all_help = "Export every analyzed row, not just the most recent ingestion"
+
     sub.add_parser("crawl",   help="Crawl pending author websites")
     sub.add_parser("analyze", help="Analyze crawled markdown with LLM")
-    sub.add_parser("export",  help="Write results to CSV")
+    export_p = sub.add_parser("export", help="Write results to CSV")
+    export_p.add_argument("--all", "-a", action="store_true", help=_all_help)
 
     run_p = sub.add_parser("run", help="Run all stages in sequence")
     run_p.add_argument("--input", "-i", metavar="FILE", default=None, help=_input_help)
+    run_p.add_argument("--all", "-a", action="store_true", help=_all_help)
 
     sub.add_parser("status",  help="Show per-stage row counts")
 

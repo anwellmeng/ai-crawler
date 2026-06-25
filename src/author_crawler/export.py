@@ -2,7 +2,9 @@
 Export stage.
 
 Two responsibilities:
-1. export()     — write a fresh CSV of all successfully analyzed authors.
+1. export()     — write a fresh CSV of successfully analyzed authors.
+                  Defaults to the most recent ingestion (latest batch_id);
+                  pass all_batches=True to export every analyzed row.
 2. dump_markdown() — write markdown from the DB back to disk for inspection.
 
 The CSV is always written fresh (not appended) so re-running export
@@ -33,16 +35,26 @@ def _filter_links(links_str: str | None) -> str:
     return ";".join(l for l in links_str.split(";") if l and not is_blocked_url(l))
 
 
-def export() -> int:
+def export(all_batches: bool = False) -> int:
     with get_conn() as conn:
-        rows = conn.execute(
-            """SELECT url, emails, contact_links
-               FROM authors
-               WHERE analyze_status = 'done'"""
-        ).fetchall()
+        if all_batches:
+            rows = conn.execute(
+                """SELECT url, emails, contact_links
+                   FROM authors
+                   WHERE analyze_status = 'done'"""
+            ).fetchall()
+        else:
+            # Scope to the most recent ingestion only.
+            rows = conn.execute(
+                """SELECT url, emails, contact_links
+                   FROM authors
+                   WHERE analyze_status = 'done'
+                     AND batch_id = (SELECT MAX(batch_id) FROM authors)"""
+            ).fetchall()
 
+    scope = "all batches" if all_batches else "latest ingestion"
     if not rows:
-        print("No analyzed authors to export.")
+        print(f"No analyzed authors to export ({scope}).")
         return 0
 
     AUTHORS_CONTACTS_CSV.parent.mkdir(parents=True, exist_ok=True)
@@ -57,8 +69,8 @@ def export() -> int:
                 _filter_links(row["contact_links"]),
             ])
 
-    print(f"Exported {len(rows)} row(s) to {AUTHORS_CONTACTS_CSV}")
-    logger.info("Exported %d rows to %s", len(rows), AUTHORS_CONTACTS_CSV)
+    print(f"Exported {len(rows)} row(s) to {AUTHORS_CONTACTS_CSV} ({scope})")
+    logger.info("Exported %d rows to %s (%s)", len(rows), AUTHORS_CONTACTS_CSV, scope)
     return 0
 
 

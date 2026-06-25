@@ -25,20 +25,20 @@ class TestExport(unittest.TestCase):
         self._tmp.cleanup()
 
     def _insert_row(self, url, analyze_status="done", emails="", contact_links="",
-                    crawl_status="crawled", markdown=None):
+                    crawl_status="crawled", markdown=None, batch_id=1):
         with patch.object(db, "DB_PATH", self.db_path):
             with db.get_conn() as conn:
                 conn.execute(
                     """INSERT INTO authors
-                           (url, crawl_status, analyze_status, emails, contact_links, markdown)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (url, crawl_status, analyze_status, emails, contact_links, markdown),
+                           (url, crawl_status, analyze_status, emails, contact_links, markdown, batch_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (url, crawl_status, analyze_status, emails, contact_links, markdown, batch_id),
                 )
 
-    def _run_export(self):
+    def _run_export(self, all_batches=False):
         with patch.object(db, "DB_PATH", self.db_path), \
              patch.object(export, "AUTHORS_CONTACTS_CSV", self.csv_path):
-            return export.export()
+            return export.export(all_batches=all_batches)
 
     def test_writes_header_row(self):
         self._insert_row("https://example.com/", emails="a@b.com")
@@ -98,6 +98,34 @@ class TestExport(unittest.TestCase):
         with self.csv_path.open() as f:
             rows = list(csv.DictReader(f))
         self.assertEqual(len(rows), 3)
+
+    def test_default_exports_only_latest_batch(self):
+        self._insert_row("https://old.com/", emails="o@b.com", batch_id=1)
+        self._insert_row("https://new.com/", emails="n@b.com", batch_id=2)
+        self._run_export()
+        with self.csv_path.open() as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["url"], "https://new.com/")
+
+    def test_all_batches_exports_every_done_row(self):
+        self._insert_row("https://old.com/", emails="o@b.com", batch_id=1)
+        self._insert_row("https://new.com/", emails="n@b.com", batch_id=2)
+        self._run_export(all_batches=True)
+        with self.csv_path.open() as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual({r["url"] for r in rows},
+                         {"https://old.com/", "https://new.com/"})
+
+    def test_latest_batch_still_filters_by_status(self):
+        # A failed row in the latest batch must not be exported.
+        self._insert_row("https://done.com/", analyze_status="done", batch_id=3)
+        self._insert_row("https://failed.com/", analyze_status="failed", batch_id=3)
+        self._run_export()
+        with self.csv_path.open() as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["url"], "https://done.com/")
 
     def test_blocked_contact_links_are_stripped(self):
         self._insert_row(

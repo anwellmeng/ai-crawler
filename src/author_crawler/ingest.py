@@ -52,6 +52,12 @@ def ingest(csv_path: Path | None = None) -> int:
         reader = csv.reader(f)
         first_row = next(reader, None)
         with get_conn() as conn:
+            # One batch per ingest run.  Every URL in this file is stamped with it
+            # (new and pre-existing alike) so export can scope to the latest run.
+            batch_id = conn.execute(
+                "SELECT COALESCE(MAX(batch_id), 0) + 1 FROM authors"
+            ).fetchone()[0]
+
             if first_row and first_row[0].strip() and not _looks_like_header(first_row[0]):
                 reader = itertools.chain([first_row], reader)
 
@@ -65,18 +71,26 @@ def ingest(csv_path: Path | None = None) -> int:
                     blocked += 1
                     continue
 
+                exists = conn.execute(
+                    "SELECT 1 FROM authors WHERE url = ?", (url,)
+                ).fetchone()
+
+                # Stamp the batch on insert and on re-ingest; crawl/analyze
+                # progress is left untouched so reruns stay safe.
                 conn.execute(
-                    "INSERT OR IGNORE INTO authors (url) VALUES (?)",
-                    (url,),
+                    """INSERT INTO authors (url, batch_id) VALUES (?, ?)
+                       ON CONFLICT(url) DO UPDATE
+                       SET batch_id   = excluded.batch_id,
+                           updated_at = datetime('now')""",
+                    (url, batch_id),
                 )
 
-                changes = conn.execute("SELECT changes()").fetchone()[0]
-                if changes:
-                    inserted += 1
-                else:
+                if exists:
                     skipped += 1
+                else:
+                    inserted += 1
 
-    logger.info("Ingest complete (%s): %d new, %d already present, %d blocked", path, inserted, skipped, blocked)
+    logger.info("Ingest complete (%s, batch %d): %d new, %d already present, %d blocked", path, batch_id, inserted, skipped, blocked)
     blocked_msg = f" {blocked} blocked domain(s) skipped." if blocked else ""
     print(f"Ingested {inserted} new author(s). ({skipped} already in database.{blocked_msg})")
     return 0
