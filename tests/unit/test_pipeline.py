@@ -1,15 +1,17 @@
 import argparse
+import csv
 import sys
 import tempfile
 import unittest
 from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src" / "author_crawler"))
 
 import db
 import export
+import ingest as ingest_mod
 import pipeline
 
 
@@ -33,6 +35,111 @@ class TestBuildParser(unittest.TestCase):
     def test_no_command_exits(self):
         with self.assertRaises(SystemExit):
             self.parser.parse_args([])
+
+    # --input / -i on ingest
+    def test_ingest_input_long_flag(self):
+        args = self.parser.parse_args(["ingest", "--input", "some/file.csv"])
+        self.assertEqual(args.input, "some/file.csv")
+
+    def test_ingest_input_short_flag(self):
+        args = self.parser.parse_args(["ingest", "-i", "some/file.csv"])
+        self.assertEqual(args.input, "some/file.csv")
+
+    def test_ingest_input_default_is_none(self):
+        args = self.parser.parse_args(["ingest"])
+        self.assertIsNone(args.input)
+
+    # --input / -i on run
+    def test_run_input_long_flag(self):
+        args = self.parser.parse_args(["run", "--input", "data/inputs/custom.csv"])
+        self.assertEqual(args.input, "data/inputs/custom.csv")
+
+    def test_run_input_short_flag(self):
+        args = self.parser.parse_args(["run", "-i", "data/inputs/custom.csv"])
+        self.assertEqual(args.input, "data/inputs/custom.csv")
+
+    def test_run_input_default_is_none(self):
+        args = self.parser.parse_args(["run"])
+        self.assertIsNone(args.input)
+
+    # crawl/analyze/export have no --input flag
+    def test_crawl_has_no_input_flag(self):
+        with self.assertRaises(SystemExit):
+            self.parser.parse_args(["crawl", "--input", "x.csv"])
+
+
+class TestCmdIngestInputRouting(unittest.TestCase):
+    """cmd_ingest must forward args.input to ingest()."""
+
+    def _run(self, input_val):
+        args = argparse.Namespace(input=input_val)
+        mock = MagicMock(return_value=0)
+        with patch.object(ingest_mod, "ingest", mock):
+            pipeline.cmd_ingest(args)
+        return mock
+
+    def test_forwards_custom_path(self):
+        mock = self._run("data/inputs/custom.csv")
+        mock.assert_called_once_with("data/inputs/custom.csv")
+
+    def test_forwards_none_when_no_flag(self):
+        mock = self._run(None)
+        mock.assert_called_once_with(None)
+
+
+class TestCmdRunInputRouting(unittest.TestCase):
+    """cmd_run must pass args.input to the ingest stage."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.db_path = self.tmp / "test.db"
+        self.csv_path = self.tmp / "custom.csv"
+        with self.csv_path.open("w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["https://example.com"])
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run_with_fakes(self, input_val):
+        captured = []
+
+        def fake_ingest(csv_path=None):
+            captured.append(csv_path)
+            return 0
+
+        async def fake_crawl():
+            return 0
+
+        async def fake_analyze():
+            return 0
+
+        def fake_export():
+            return 0
+
+        args = argparse.Namespace(input=input_val)
+        # cmd_run does local imports ("from ingest import ingest"), so patch
+        # the function on the already-loaded module object.
+        import crawl as crawl_mod
+        import analyze as analyze_mod
+        import export as export_mod
+        with patch.object(ingest_mod, "ingest", fake_ingest), \
+             patch.object(crawl_mod, "crawl", fake_crawl), \
+             patch.object(analyze_mod, "analyze", fake_analyze), \
+             patch.object(export_mod, "export", fake_export):
+            pipeline.cmd_run(args)
+
+        return captured
+
+    def test_run_passes_custom_path_to_ingest(self):
+        captured = self._run_with_fakes(str(self.csv_path))
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0], str(self.csv_path))
+
+    def test_run_passes_none_when_no_flag(self):
+        captured = self._run_with_fakes(None)
+        self.assertEqual(captured[0], None)
 
 
 class TestCmdStatus(unittest.TestCase):

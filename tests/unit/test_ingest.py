@@ -116,5 +116,66 @@ class TestIngest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
 
 
+class TestIngestCustomPath(unittest.TestCase):
+    """Tests for the csv_path argument added to ingest()."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.db_path = self.tmp / "test.db"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self, csv_path):
+        with patch.object(db, "DB_PATH", self.db_path):
+            return ingest.ingest(csv_path)
+
+    def _rows(self):
+        with patch.object(db, "DB_PATH", self.db_path):
+            with db.get_conn() as conn:
+                return conn.execute("SELECT url FROM authors").fetchall()
+
+    def test_custom_path_ingests_urls(self):
+        custom = self.tmp / "my_authors.csv"
+        _write_csv(custom, [["https://example.com"], ["https://example.org"]])
+        result = self._run(custom)
+        self.assertEqual(result, 0)
+        urls = {r["url"] for r in self._rows()}
+        self.assertEqual(urls, {"https://example.com", "https://example.org"})
+
+    def test_custom_path_missing_returns_error(self):
+        missing = self.tmp / "nonexistent.csv"
+        result = self._run(missing)
+        self.assertEqual(result, 1)
+
+    def test_custom_path_string_accepted(self):
+        custom = self.tmp / "str_path.csv"
+        _write_csv(custom, [["https://example.com"]])
+        result = self._run(str(custom))
+        self.assertEqual(result, 0)
+        self.assertEqual(len(self._rows()), 1)
+
+    def test_custom_path_does_not_require_default_csv(self):
+        """Passing a custom path should not fall back to AUTHORS_CSV."""
+        custom = self.tmp / "custom.csv"
+        _write_csv(custom, [["https://example.com"]])
+        fake_default = self.tmp / "authors.csv"
+        # fake_default intentionally not created
+        with patch.object(db, "DB_PATH", self.db_path), \
+             patch.object(ingest, "AUTHORS_CSV", fake_default):
+            result = ingest.ingest(custom)
+        self.assertEqual(result, 0)
+
+    def test_none_falls_back_to_default(self):
+        default = self.tmp / "authors.csv"
+        _write_csv(default, [["https://example.com"]])
+        with patch.object(db, "DB_PATH", self.db_path), \
+             patch.object(ingest, "AUTHORS_CSV", default):
+            result = ingest.ingest(None)
+        self.assertEqual(result, 0)
+        self.assertEqual(len(self._rows()), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
