@@ -17,11 +17,17 @@ Status transitions:
 """
 from __future__ import annotations
 
-import asyncio, json, logging, os
+import asyncio, json, logging, os, re
 from pathlib import Path
 
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from openai import (
+    AsyncOpenAI,
+    APIConnectionError,
+    APITimeoutError,
+    InternalServerError,
+    RateLimitError,
+)
 
 from config import (
     LLM_CONCURRENCY,
@@ -35,9 +41,7 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Reasoning: low
-
-Extract contact info from author-website Markdown. Return ONLY this JSON, no prose:
+SYSTEM_PROMPT = """Extract contact info from author-website Markdown. Return ONLY this JSON, no prose:
 {"emails": [...], "contact_links": [...]}
 
 EMAILS — all professional contacts for reaching the author:
@@ -55,6 +59,14 @@ Use empty arrays if nothing is found.
 
 # Markdown shorter than this is assumed to be bot-blocked or blank.
 _MIN_USEFUL_TOKENS = 20
+
+# Transient API errors worth retrying with exponential backoff.
+_RETRYABLE = (RateLimitError, APITimeoutError, InternalServerError, APIConnectionError)
+_MAX_RETRIES = 4          # total attempts = _MAX_RETRIES (1 initial + 3 retries)
+_REQUEST_TIMEOUT = 60.0   # seconds per API call
+
+# Matches the first {...} block (greedy), tolerating ```json fences / prose.
+_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 try:
     import tiktoken
@@ -76,6 +88,39 @@ def _truncate(text: str, limit: int) -> str:
     if len(tokens) <= limit:
         return text
     return _ENC.decode(tokens[:limit])
+
+
+def _as_str_list(value) -> list[str]:
+    """Coerce a model field into a clean list of strings.
+
+    Tolerates the model returning a bare string instead of a list, or a list
+    with non-string elements — without this, a string value would be char-joined
+    into garbage by '; '.join() downstream.
+    """
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if isinstance(value, list):
+        return [v.strip() for v in value if isinstance(v, str) and v.strip()]
+    return []
+
+
+def _parse_response(content: str | None) -> tuple[list[str], list[str]]:
+    """Parse the model's reply into (emails, contact_links).
+
+    Raises ValueError on empty content and json.JSONDecodeError on unparseable
+    content (both caught by the caller and recorded as a failure).
+    """
+    if not content or not content.strip():
+        raise ValueError("empty model response")
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        # Fall back to extracting the first {...} block (handles ```json fences).
+        match = _JSON_RE.search(content)
+        if not match:
+            raise
+        data = json.loads(match.group(0))
+    return _as_str_list(data.get("emails")), _as_str_list(data.get("contact_links"))
 
 
 # ── DB writes ─────────────────────────────────────────────────────────────────
@@ -138,21 +183,40 @@ async def _analyze_one(
             logger.info("Truncated %s (%d → %d tokens)", url, tok, LLM_TOKEN_LIMIT)
 
         try:
-            completion = await client.chat.completions.create(
+            completion = await _create_with_retry(client, url, markdown)
+            result = completion.choices[0].message.content
+            emails, contact_links = _parse_response(result)
+            return url, "done", emails, contact_links, None
+        except (json.JSONDecodeError, ValueError) as exc:
+            return url, "failed", [], [], f"invalid response: {exc}"
+        except Exception as exc:
+            return url, "failed", [], [], str(exc)
+
+
+async def _create_with_retry(client: AsyncOpenAI, url: str, markdown: str):
+    """Call the chat completions endpoint, retrying transient errors with
+    exponential backoff. Non-transient errors propagate immediately."""
+    for attempt in range(_MAX_RETRIES):
+        try:
+            return await client.chat.completions.create(
                 model=LLM_MODEL,
                 max_tokens=LLM_MAX_TOKENS,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": markdown},
                 ],
+                response_format={"type": "json_object"},
+                extra_body={"reasoning": {"effort": "low"}},
             )
-            result = completion.choices[0].message.content
-            data = json.loads(result)
-            return url, "done", data.get("emails", []), data.get("contact_links", []), None
-        except json.JSONDecodeError as exc:
-            return url, "failed", [], [], f"invalid JSON: {exc}"
-        except Exception as exc:
-            return url, "failed", [], [], str(exc)
+        except _RETRYABLE as exc:
+            if attempt == _MAX_RETRIES - 1:
+                raise
+            delay = 2 ** attempt
+            logger.warning(
+                "Transient API error for %s (attempt %d/%d): %s — retrying in %ds",
+                url, attempt + 1, _MAX_RETRIES, exc, delay,
+            )
+            await asyncio.sleep(delay)
 
 
 # ── Stage entry point ─────────────────────────────────────────────────────────
@@ -178,6 +242,7 @@ async def analyze() -> int:
     client = AsyncOpenAI(
         api_key=api_key,
         base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+        timeout=_REQUEST_TIMEOUT,
     )
 
     semaphore = asyncio.Semaphore(LLM_CONCURRENCY)

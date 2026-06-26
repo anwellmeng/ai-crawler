@@ -160,6 +160,76 @@ class TestAnalyze(unittest.TestCase):
         self._run_analyze(fake_cls)
         fake_cls.return_value.chat.completions.create.assert_not_called()
 
+    # ── robust parsing ─────────────────────────────────────────────────────────
+
+    def test_parses_fenced_json(self):
+        fenced = "```json\n" + GOOD_RESPONSE + "\n```"
+        self._insert_url(TEST_URL, markdown=CONTACT_MARKDOWN)
+        self._run_analyze(_make_fake_openai(content=fenced))
+        row = self._get_row(TEST_URL)
+        self.assertEqual(row["analyze_status"], "done")
+        self.assertIn("author@example.com", row["emails"])
+
+    def test_marks_failed_on_none_content(self):
+        self._insert_url(TEST_URL, markdown=CONTACT_MARKDOWN)
+        self._run_analyze(_make_fake_openai(content=None))
+        row = self._get_row(TEST_URL)
+        self.assertEqual(row["analyze_status"], "failed")
+        self.assertIn("empty model response", row["analyze_error"])
+
+    def test_coerces_string_emails(self):
+        # Model returns emails as a bare string instead of a list.
+        weird = json.dumps({"emails": "solo@example.com", "contact_links": []})
+        self._insert_url(TEST_URL, markdown=CONTACT_MARKDOWN)
+        self._run_analyze(_make_fake_openai(content=weird))
+        row = self._get_row(TEST_URL)
+        self.assertEqual(row["emails"], "solo@example.com")
+
+    def test_retries_transient_error_then_succeeds(self):
+        good = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=GOOD_RESPONSE))]
+        )
+        mock_cls = MagicMock()
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=[RuntimeError("rate limited"), good]
+        )
+        self._insert_url(TEST_URL, markdown=CONTACT_MARKDOWN)
+        # Treat RuntimeError as transient and skip the real backoff sleep.
+        with patch.object(analyze, "_RETRYABLE", (RuntimeError,)), \
+             patch.object(analyze.asyncio, "sleep", new=AsyncMock()):
+            self._run_analyze(mock_cls)
+        row = self._get_row(TEST_URL)
+        self.assertEqual(row["analyze_status"], "done")
+        self.assertEqual(mock_client.chat.completions.create.call_count, 2)
+
+
+class TestParseResponse(unittest.TestCase):
+    def test_plain_json(self):
+        emails, links = analyze._parse_response(GOOD_RESPONSE)
+        self.assertEqual(emails, ["author@example.com"])
+        self.assertEqual(links, ["https://example.com/contact"])
+
+    def test_fenced_json(self):
+        emails, _ = analyze._parse_response("```json\n" + GOOD_RESPONSE + "\n```")
+        self.assertEqual(emails, ["author@example.com"])
+
+    def test_none_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            analyze._parse_response(None)
+
+    def test_garbage_raises_json_error(self):
+        with self.assertRaises(json.JSONDecodeError):
+            analyze._parse_response("not json at all")
+
+    def test_coerces_and_strips(self):
+        emails, links = analyze._parse_response(
+            json.dumps({"emails": "  a@x.com ", "contact_links": ["", "u", 5]})
+        )
+        self.assertEqual(emails, ["a@x.com"])
+        self.assertEqual(links, ["u"])
+
 
 if __name__ == "__main__":
     unittest.main()
