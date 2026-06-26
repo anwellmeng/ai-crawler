@@ -44,4 +44,4 @@ BLOCKED_DOMAINS: frozenset = frozenset([
 LLM_MODEL       = "openai/gpt-oss-20b"
 LLM_MAX_TOKENS  = 1_000
 LLM_CONCURRENCY = 10       # simultaneous API calls
-LLM_TOKEN_LIMIT = 128_000  # markdown truncated to this before sending (model ctx=131K, ~3K reserved for system prompt + output)
+LLM_TOKEN_LIMIT = 16_000   # markdown truncated (top-kept) before sending. Tuned on 341 real crawled docs: p95 size ≈ 10K tokens, and 16K preserves the deepest extracted email/link in 99.6% of docs while capping the rare ~50K-token outlier. Lower limits lose tail recall (esp. /contact subpages appended after long homepages) for negligible savings, since cost is dominated by the many small docs no limit touches.
